@@ -137,7 +137,8 @@ function submitAnswers(userId, userAnswers) {
   
   var rData = rSheet.getDataRange().getValues();
   var userRowIndex = -1;
-  for (var j = 0; j < rData.length; j++) {
+  // 從 j = 1 開始，跳過第一列標題列
+  for (var j = 1; j < rData.length; j++) {
     if (String(rData[j][0]) === String(userId)) {
       userRowIndex = j + 1;
       break;
@@ -146,8 +147,6 @@ function submitAnswers(userId, userAnswers) {
   
   var now = new Date();
   var totalQuestions = userAnswers.length;
-  
-  // 讀取設定門檻（例如答對 60% 題數即通關）
   var isPassThisTime = score >= (totalQuestions * 0.6);
   
   var playCount = 0;
@@ -157,21 +156,28 @@ function submitAnswers(userId, userAnswers) {
   var attemptsToPass = "";
   
   if (userRowIndex !== -1) {
-    var currentRow = rSheet.getRange(userRowIndex, 1, 1, 7).getValues()[0];
+    // 直接從已讀取的資料拿取舊紀錄，避免重複呼叫 API
+    var currentRow = rData[userRowIndex - 1];
     playCount = parseInt(currentRow[1]) || 0;
     totalScore = parseFloat(currentRow[2]) || 0;
     maxScore = parseFloat(currentRow[3]) || 0;
-    firstPassScore = currentRow[4];
-    attemptsToPass = currentRow[5];
+    firstPassScore = currentRow.length > 4 ? currentRow[4] : "";
+    attemptsToPass = currentRow.length > 5 ? currentRow[5] : "";
     
     playCount += 1;
     totalScore += score;
     maxScore = Math.max(maxScore, score);
     
-    var previouslyPassed = firstPassScore !== "" && firstPassScore !== null;
+    var previouslyPassed = firstPassScore !== "" && firstPassScore !== null && firstPassScore !== undefined;
     if (!previouslyPassed && isPassThisTime) {
       firstPassScore = score;
       attemptsToPass = playCount;
+    }
+    
+    // 確保欄位數足夠（防呆，避免寫入時超出最大欄位限制）
+    var maxCols = rSheet.getMaxColumns();
+    if (maxCols < 7) {
+      rSheet.insertColumnsAfter(maxCols, 7 - maxCols);
     }
     
     rSheet.getRange(userRowIndex, 1, 1, 7).setValues([[
@@ -202,6 +208,9 @@ function submitAnswers(userId, userAnswers) {
       now
     ]);
   }
+  
+  // 強制寫入試算表以在此處捕獲任何潛在的寫入異常 (避免非同步寫入導致的錯誤無法被 try-catch 擷取)
+  SpreadsheetApp.flush();
   
   var responseData = {
     userId: userId,
@@ -238,15 +247,27 @@ function submitAnswers(userId, userAnswers) {
 
 專案內已設定 GitHub Actions 部署工作流。當您將程式碼推送至 GitHub 遠端儲存庫的 `main` 分支時，系統將自動編譯並發佈至 GitHub Pages。
 
-### 1. 配置 GitHub Repository Secrets
-為了在 GitHub 雲端編譯時注入環境變數，請依照下列步驟於 GitHub 設定 Secrets：
-1. 進入您在 GitHub 的專案儲存庫頁面，點選右上角的 **「Settings」**。
-2. 在左側選單中找到 **「Secrets and variables」 > 「Actions」**。
-3. 點選右上角的 **「New repository secret」**。
-4. 依序新增以下三個密鑰（名稱與值對照）：
-   - `VITE_GOOGLE_APP_SCRIPT_URL`：填入您的 Google Apps Script 網頁應用程式 URL。
-   - `VITE_PASS_THRESHOLD`：填入通過門檻題數（例如 `3`）。
-   - `VITE_QUESTION_COUNT`：填入每次遊玩的題目數量（例如 `5`）。
+### 1. 配置 GitHub Repository Secrets (環境變數)
+
+為了讓 GitHub Actions 在雲端進行專案編譯 (Build) 時，能夠正確讀取並注入 `.env` 中的設定，您需要將這些環境變數設定為 GitHub 的 Repository Secrets。請依照下列步驟進行設定：
+
+1. 進入您在 GitHub 的專案儲存庫 (Repository) 頁面。
+2. 點選上方導覽列最右側的 **「Settings」** (設定) 按鈕。
+3. 在左側選單中找到 **Security** 區塊，點選 **「Secrets and variables」 > 「Actions」**。
+4. 確保選取在 **Secrets** 頁籤下，點選右上角的 **「New repository secret」** 按鈕。
+5. 依序新增以下三個密鑰 (Name 與 Value)：
+   * **密鑰 1**：
+     * **Name**: `VITE_GOOGLE_APP_SCRIPT_URL`
+     * **Value**: 您的 Google Apps Script 網頁應用程式 URL (例如 `https://script.google.com/macros/s/.../exec`)
+   * **密鑰 2**：
+     * **Name**: `VITE_PASS_THRESHOLD`
+     * **Value**: 通過門檻題數 (例如 `3`)
+   * **密鑰 3**：
+     * **Name**: `VITE_QUESTION_COUNT`
+     * **Value**: 每次遊玩的題目數量 (例如 `5`)
+6. 每次輸入完 Name 與 Value 後，點選 **「Add secret」** 完成儲存。
+
+> ⚠️ **重要提示**：由於本專案採用 Vite 開發，所有以 `VITE_` 開頭的環境變數，皆會在建置階段 (Build time) 被靜態替換並嵌入到前端的靜態資源中。因此，請務必在推送程式碼部署前於 GitHub 設定好這些 Secrets，否則部署上線後的網頁會讀取不到這些設定。
 
 ### 2. 推送程式碼觸發部署
 將本地程式碼提交並推送至 `main` 分支：
